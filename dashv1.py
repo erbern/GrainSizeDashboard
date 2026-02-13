@@ -17,7 +17,7 @@ import dash
 from dash import dcc, html, Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
-import webbrowser
+import os
 
 # -----------------------
 # FUNCTIONS
@@ -300,4 +300,3 @@ def update_dashboard(boreholes, formations, depthbins):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(host="0.0.0.0", port=port)
-
