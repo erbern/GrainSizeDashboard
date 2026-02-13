@@ -174,7 +174,32 @@ def update_dashboard(boreholes, formations):
         return empty_fig, empty_fig, empty_fig, "No data for selected boreholes/formations"
 
     # Grain size plot
-    fig_samples = px.line(dff, x="Size", y="Percent_Volume", color="Formation", line_group="SampleName", log_x=True, template="plotly_white")
+    fig_samples = go.Figure()
+    colors = px.colors.qualitative.Dark24
+
+    for i, formation in enumerate(mean_sd_filtered["Formation"].unique()):
+        f_data = mean_sd_filtered[mean_sd_filtered["Formation"] == formation]
+        if f_data.empty:
+            continue
+
+        fig_samples.add_trace(go.Scattergl(
+            x=f_data["Size"],
+            y=f_data["mean"],
+            mode="lines",
+            line=dict(width=2, color=colors[i % len(colors)]),
+            name=formation
+            ))
+
+    fig_samples.update_layout(
+        xaxis_title="Size (µm)",
+        yaxis_title="Percent Volume",
+        legend_title="Formation",
+        template="plotly_white",
+        margin=dict(l=60, r=40, t=40, b=60)
+        )
+    fig_samples.update_xaxes(type="log", range=[-2, 3.7])
+
+        
     fig_samples.update_layout(xaxis_title="Size (µm)", yaxis_title="Percent Volume", legend_title="Formation", margin=dict(l=60, r=40, t=40, b=60))
     fig_samples.update_xaxes(range=[-2, 3.7])
 
