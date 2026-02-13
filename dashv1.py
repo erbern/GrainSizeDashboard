@@ -1,15 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Grain Size Distribution – Master Dashboard (Render-ready)
+Created on Fri Feb 13 13:44:58 2026
+
+@author: nhz3915
 """
 
-import os
+# -*- coding: utf-8 -*-
+"""
+Grain Size Distribution – Master Dashboard with Mean ± SD and Ternary Plot
+With Borehole, Formation, and Binned Depth Filters
+"""
+
 import numpy as np
 import pandas as pd
 import dash
 from dash import dcc, html, Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
+import webbrowser
 
 # -----------------------
 # FUNCTIONS
@@ -27,12 +35,12 @@ def texture_fractions(df_sample):
     clay = df_sample.loc[df_sample["Size"] < 4, "Percent_Volume"].sum()
     silt = df_sample.loc[(df_sample["Size"] >= 4) & (df_sample["Size"] < 63), "Percent_Volume"].sum()
     sand = df_sample.loc[(df_sample["Size"] >= 63) & (df_sample["Size"] <= 2000), "Percent_Volume"].sum()
-    return {"Clay_0_4": clay, "Silt_4_63": silt, "Sand_63_2000": sand}
+    return {"Clay": clay, "Silt": silt, "Sand": sand}
 
 # -----------------------
 # LOAD DATA
 # -----------------------
-F = "MS_continuous_Data_20260205.csv"  # CSV in same folder
+F = "C:/MS_DATA/MS_continuous_Data_20260205.csv"
 df = pd.read_csv(F)
 
 df2 = df.melt(
@@ -41,8 +49,46 @@ df2 = df.melt(
     var_name="Size",
     value_name="Percent_Volume"
 )
+
 df2["Size"] = pd.to_numeric(df2["Size"], errors="coerce")
 df2["Percent_Volume"] = pd.to_numeric(df2["Percent_Volume"], errors="coerce")
+
+DEFAULT_BOREHOLE = sorted(df2["BoreholeID"].dropna().unique())[0]
+
+# -----------------------
+# DEPTH BINNING (NEW)
+# -----------------------
+DEPTH_BIN_SIZE = 5  # feet
+
+df2["DepthBin"] = (np.floor(df2["depth"] / DEPTH_BIN_SIZE) * DEPTH_BIN_SIZE).astype(int)
+df2["DepthBinLabel"] = (
+    df2["DepthBin"].astype(str) + "–" +
+    (df2["DepthBin"] + DEPTH_BIN_SIZE).astype(str) + " ft"
+)
+
+# -----------------------
+# PRECOMPUTE STATS (UNCHANGED LOGIC)
+# -----------------------
+sample_stats = []
+
+for sample_name, g in df2.groupby("SampleName"):
+    if g["Percent_Volume"].sum() > 0:
+        d_vals = compute_d_values(g)
+        tex_vals = texture_fractions(g)
+        d_vals.update(tex_vals)
+        d_vals.update({
+            "SampleName": sample_name,
+            "Formation": g["Formation"].iloc[0],
+            "BoreholeID": g["BoreholeID"].iloc[0],
+            "DepthBinLabel": g["DepthBinLabel"].iloc[0]  # NEW
+        })
+        sample_stats.append(d_vals)
+
+df_stats = pd.DataFrame(sample_stats)
+
+
+
+formations_by_borehole = df2.groupby("BoreholeID")["Formation"].unique().to_dict()
 
 # -----------------------
 # DASH APP
@@ -55,7 +101,6 @@ app.layout = html.Div(
 
         html.H2("Grain Size Distribution – Master Dashboard"),
 
-        # -------- CONTROLS --------
         html.Div(
             style={"display": "flex", "gap": "20px", "marginBottom": "10px", "flexWrap": "wrap"},
             children=[
@@ -64,41 +109,52 @@ app.layout = html.Div(
                     html.Label("Borehole(s)"),
                     dcc.Dropdown(
                         id="borehole-dropdown",
-                        options=[{"label": b, "value": b} for b in sorted(df2["BoreholeID"].dropna().unique())],
-                        value=sorted(df2["BoreholeID"].dropna().unique()),
+                        options=[{"label": b, "value": b}
+                                 for b in sorted(df2["BoreholeID"].dropna().unique())],
+                        value=[DEFAULT_BOREHOLE],  # <-- only one borehole on load
                         multi=True
                     )
-                ], style={"width": "350px"}),
+                ], style={"width": "320px"}),
 
                 html.Div([
                     html.Label("Formation(s)"),
+                    dcc.Dropdown(id="formation-dropdown", multi=True)
+                ], style={"width": "420px"}),
+
+                html.Div([
+                    html.Label("Depth Bin(s)"),
                     dcc.Dropdown(
-                        id="formation-dropdown",
+                        id="depthbin-dropdown",
+                        options=[{"label": d, "value": d}
+                                 for d in sorted(df2["DepthBinLabel"].unique())],
+                        value=sorted(df2["DepthBinLabel"].unique()),
                         multi=True
                     )
-                ], style={"width": "450px"}),
-
+                ], style={"width": "320px"})
             ]
         ),
 
-        # -------- MAIN CONTENT --------
         html.Div(
             style={"display": "flex", "flex": "1", "gap": "15px", "minHeight": "0"},
             children=[
 
-                # ---- PLOTS ----
                 html.Div(
-                    style={"flex": "3", "minHeight": "0", "display": "flex", "flexDirection": "column", "gap": "15px"},
+                    style={"flex": "2", "display": "flex", "flexDirection": "column", "gap": "15px"},
                     children=[
-                        dcc.Graph(id="grain-size-plot", style={"flex": "1", "minHeight": "0"}),
-                        dcc.Graph(id="mean-sd-plot", style={"flex": "1", "minHeight": "0"})
+                        dcc.Graph(id="grain-size-plot"),
+                        dcc.Graph(id="mean-sd-plot")
                     ]
                 ),
 
-                # ---- SUMMARY STATS ----
                 html.Div(
-                    style={"flex": "1", "padding": "10px", "border": "1px solid #ccc", "borderRadius": "6px", "backgroundColor": "#fafafa"},
-                    children=[html.H4("Summary Statistics"), html.Div(id="summary-panel")]
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "gap": "15px"},
+                    children=[
+                        dcc.Graph(id="ternary-plot", style={"height": "400px"}),
+                        html.Div(
+                            style={"overflowY": "auto", "border": "1px solid #ccc", "padding": "10px"},
+                            children=[html.H4("Summary Statistics"), html.Div(id="summary-panel")]
+                        )
+                    ]
                 )
             ]
         )
@@ -106,115 +162,137 @@ app.layout = html.Div(
 )
 
 # -----------------------
-# DYNAMIC FORMATION DROPDOWN
+# FORMATION DROPDOWN
 # -----------------------
 @app.callback(
     Output("formation-dropdown", "options"),
     Output("formation-dropdown", "value"),
     Input("borehole-dropdown", "value")
 )
-def update_formation_options(selected_boreholes):
-    if not selected_boreholes:
+def update_formation_options(boreholes):
+    if not boreholes:
         return [], []
-    filtered = df2[df2["BoreholeID"].isin(selected_boreholes)]
-    formations = sorted(filtered["Formation"].dropna().unique())
+    formations = sorted({f for b in boreholes for f in formations_by_borehole.get(b, [])})
     return [{"label": f, "value": f} for f in formations], formations
 
 # -----------------------
-# UPDATE DASHBOARD
+# MAIN CALLBACK
 # -----------------------
 @app.callback(
     Output("grain-size-plot", "figure"),
     Output("mean-sd-plot", "figure"),
+    Output("ternary-plot", "figure"),
     Output("summary-panel", "children"),
     Input("borehole-dropdown", "value"),
-    Input("formation-dropdown", "value")
+    Input("formation-dropdown", "value"),
+    Input("depthbin-dropdown", "value")
 )
-def update_dashboard(boreholes, formations):
+def update_dashboard(boreholes, formations, depthbins):
+
     if not boreholes:
-        return px.line(), px.line(), "No data selected"
+        return px.line(), px.line(), px.line(), "No data selected"
 
     dff = df2[df2["BoreholeID"].isin(boreholes)]
     if formations:
         dff = dff[dff["Formation"].isin(formations)]
+    if depthbins:
+        dff = dff[dff["DepthBinLabel"].isin(depthbins)]
 
-    # ---------------- PLOT 1: individual samples ----------------
+    stats_filtered = df_stats[df_stats["BoreholeID"].isin(boreholes)]
+    if formations:
+        stats_filtered = stats_filtered[stats_filtered["Formation"].isin(formations)]
+    if depthbins:
+        stats_filtered = stats_filtered[stats_filtered["DepthBinLabel"].isin(depthbins)]
+
+    # --- COMPUTE MEAN ± SD FROM WHAT IS ACTUALLY PLOTTED ---
+    mean_sd_filtered = (
+        dff
+        .groupby(["Formation", "Size"])["Percent_Volume"]
+        .agg(mean="mean", std="std")
+        .reset_index()
+        )
+
+
+    # -------- GRAIN SIZE --------
     fig_samples = px.line(
-        dff,
-        x="Size",
-        y="Percent_Volume",
-        color="SampleName",
-        line_group="SampleName",
-        log_x=True,
-        template="plotly_white"
-    )
-    fig_samples.update_layout(
-        xaxis_title="Size (µm)",
-        yaxis_title="Percent Volume",
-        legend_title="SampleName",
-        margin=dict(l=60, r=40, t=40, b=60)
+        dff, x="Size", y="Percent_Volume",
+        color="Formation", line_group="SampleName",
+        log_x=True, template="plotly_white"
     )
     fig_samples.update_xaxes(range=[-2, 3.7])
 
-    # ---------------- PLOT 2: Mean ± SD ----------------
-    stats_df = dff.groupby("Size")["Percent_Volume"].agg(["mean", "std"]).reset_index()
-    stats_df["upper"] = stats_df["mean"] + stats_df["std"]
-    stats_df["lower"] = stats_df["mean"] - stats_df["std"]
-
+    # -------- MEAN ± SD PLOT --------
+    # -------- MEAN ± SD PLOT (MATCHES PLOT 1) --------
     fig_mean_sd = go.Figure()
-    fig_mean_sd.add_trace(go.Scatter(
-        x=stats_df["Size"], y=stats_df["upper"],
-        line=dict(color='lightblue'),
-        showlegend=False
-    ))
-    fig_mean_sd.add_trace(go.Scatter(
-        x=stats_df["Size"], y=stats_df["lower"],
-        line=dict(color='lightblue'),
-        fill='tonexty',
-        fillcolor='rgba(173,216,230,0.3)',
-        showlegend=False
-    ))
-    fig_mean_sd.add_trace(go.Scatter(
-        x=stats_df["Size"], y=stats_df["mean"],
-        line=dict(color='blue', width=3),
-        name="Mean"
-    ))
-    fig_mean_sd.update_layout(
-        title="Mean ± Standard Deviation",
-        xaxis_title="Size (µm)",
-        yaxis_title="Percent Volume",
-        template="plotly_white",
-        margin=dict(l=60, r=40, t=40, b=60)
+    colors = px.colors.qualitative.Dark24
+    
+    for i, formation in enumerate(mean_sd_filtered["Formation"].unique()):
+        f_data = mean_sd_filtered[mean_sd_filtered["Formation"] == formation]
+        color = colors[i % len(colors)]
+        
+        fig_mean_sd.add_trace(go.Scatter(
+            x=f_data["Size"],
+            y=f_data["mean"],
+            line=dict(color=color, width=3),
+            name=f"{formation} Mean"
+            ))
+        
+        fig_mean_sd.add_trace(go.Scatter(
+            x=f_data["Size"],
+            y=f_data["mean"] + f_data["std"],
+            line=dict(color=color),
+            showlegend=False
+            ))
+        
+        fig_mean_sd.add_trace(go.Scatter(
+            x=f_data["Size"],
+            y=f_data["mean"] - f_data["std"],
+            fill="tonexty",
+            fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.3)",
+            line=dict(color=color),
+            showlegend=False
+            ))
+        
+        fig_mean_sd.update_layout(
+            title="Mean ± Standard Deviation (Filtered Samples)",
+            xaxis_title="Size (µm)",
+            yaxis_title="Percent Volume",
+            template="plotly_white",
+            margin=dict(l=60, r=40, t=40, b=60)
+            )
+        
+        fig_mean_sd.update_xaxes(type="log", range=[-2, 3.7])
+
+
+    # -------- TERNARY --------
+    fig_tern = px.scatter_ternary(
+        stats_filtered,
+        a="Clay", b="Sand", c="Silt",
+        color="Formation",
+        hover_name="SampleName",
+        template="plotly_white"
     )
-    fig_mean_sd.update_xaxes(type="log", range=[-2, 3.7])
 
-    # ---------------- SUMMARY STATS ----------------
-    d_stats, tex_stats = [], []
-    for sample, g in dff.groupby("SampleName"):
-        if g["Percent_Volume"].sum() > 0:
-            d_stats.append(compute_d_values(g))
-            tex_stats.append(texture_fractions(g))
-
-    d_df = pd.DataFrame(d_stats)
-    t_df = pd.DataFrame(tex_stats)
-
+    # -------- SUMMARY --------
     summary = [
-        html.H5("Grain Size Percentiles (Mean)"),
-        html.P(f"D10: {d_df['D10'].mean():.1f} µm"),
-        html.P(f"D50: {d_df['D50'].mean():.1f} µm"),
-        html.P(f"D90: {d_df['D90'].mean():.1f} µm"),
-        html.Hr(),
-        html.H5("Texture Fractions (Mean %)"),
-        html.P(f"Clay (0–4 µm): {t_df['Clay_0_4'].mean():.1f}%"),
-        html.P(f"Silt (4–63 µm): {t_df['Silt_4_63'].mean():.1f}%"),
-        html.P(f"Sand (63–2000 µm): {t_df['Sand_63_2000'].mean():.1f}%"),
-        html.Hr(),
-        html.P(f"Samples: {dff['SampleName'].nunique()}"),
-        html.P(f"Boreholes: {dff['BoreholeID'].nunique()}"),
-        html.P(f"Formations: {dff['Formation'].nunique()}")
+        html.P(f"Total Boreholes selected: {stats_filtered['BoreholeID'].nunique()}"),
+        html.P(f"Total Samples selected: {stats_filtered['SampleName'].nunique()}"),
+        html.Hr()
     ]
 
-    return fig_samples, fig_mean_sd, summary
+    for formation, fg in stats_filtered.groupby("Formation"):
+        summary.extend([
+            html.H5(f"Formation: {formation}"),
+            html.P(f"D10: {fg['D10'].mean():.1f} µm"),
+            html.P(f"D50: {fg['D50'].mean():.1f} µm"),
+            html.P(f"D90: {fg['D90'].mean():.1f} µm"),
+            html.P(f"Clay: {fg['Clay'].mean():.1f}%"),
+            html.P(f"Silt: {fg['Silt'].mean():.1f}%"),
+            html.P(f"Sand: {fg['Sand'].mean():.1f}%"),
+            html.Hr()
+        ])
+
+    return fig_samples, fig_mean_sd, fig_tern, summary
 
 # -----------------------
 # RUN APP
