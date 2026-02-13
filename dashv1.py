@@ -40,7 +40,7 @@ def texture_fractions(df_sample):
 # -----------------------
 # LOAD DATA
 # -----------------------
-F = "C:/MS_DATA/MS_continuous_Data_20260205.csv"
+F = "MS_continuous_Data_20260205.csv"
 df = pd.read_csv(F)
 
 df2 = df.melt(
@@ -300,3 +300,4 @@ def update_dashboard(boreholes, formations, depthbins):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(host="0.0.0.0", port=port)
+
